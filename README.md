@@ -1,94 +1,123 @@
-🚦 VisionGuard AI
+# VisionGuard AI
+### Real-Time Pedestrian & Vehicle Detection System
 
-Real-Time Pedestrian & Vehicle Detection and Alert System
+---
 
-VisionGuard AI is a deep learning–based computer vision system designed to detect pedestrians and vehicles in real-time from images and videos. The system estimates the distance of pedestrians from the camera and generates intelligent alerts when a pedestrian is detected too close, helping improve road safety and situational awareness.
+## Overview
+VisionGuard AI is a real-time computer vision system designed to detect pedestrians and vehicles from images and video streams using deep learning. The system estimates pedestrian proximity and triggers alerts only when safety thresholds are breached, reducing unnecessary alert noise during continuous video processing.
 
-🎯 Problem Statement
+---
 
-Road accidents involving pedestrians and vehicles are a major safety concern, especially in urban areas. Drivers often fail to notice nearby pedestrians due to blind spots, poor visibility, or delayed reaction times. VisionGuard AI aims to address this issue by providing real-time pedestrian detection and proximity-based alerts.
+##  Problem Statement
+Pedestrian safety is a critical challenge in urban traffic environments. Traditional driver-assistance systems often fail to provide timely warnings due to poor visibility, blind spots, or delayed human response. There is a need for an automated vision-based system capable of detecting pedestrians in real time and issuing proximity-aware alerts without overwhelming the user.
 
-🧠 Solution Overview
+---
 
-VisionGuard AI uses a YOLO (You Only Look Once) deep learning model to detect objects in real time. It processes images and videos uploaded by the user, identifies pedestrians and vehicles, estimates pedestrian distance, and triggers alerts only when necessary using a cooldown-based alert mechanism.
+##  Solution Overview
+VisionGuard AI uses the YOLO (You Only Look Once) deep learning model to detect objects in real time. The system:
+- Processes images and videos
+- Identifies pedestrians and vehicles
+- Estimates pedestrian distance
+- Generates alerts only when required
+- Prevents alert flooding in video streams
 
-✨ Key Features
+---
 
-📸 Image Upload Detection
-🎥 Real-Time Video Detection
-🧍 Pedestrian & Vehicle Identification
-📏 Distance Estimation for Pedestrians
-🚨 Proximity-Based Alerts
-⏱ Cooldown-Based Alert System (prevents repeated alerts in videos)
-📊 Detection Summary (Pedestrians, Vehicles, Total)
+## Core Features
+- Real-time pedestrian and vehicle detection
+- Image and video input support
+- Distance-based pedestrian proximity estimation
+- Cooldown-controlled alert system for video streams
+- Detection summary analytics
+- Modular and scalable architecture  
 
+---
 
-🛠️ Technologies Used
-Python
-YOLO (Ultralytics)
-OpenCV
-Streamlit
-NumPy
-PyTorch
+## System Architecture
 
+```text
+User Input (Image / Video)
+        ↓
+YOLO Object Detection
+        ↓
+Pedestrian Distance Estimation
+        ↓
+Alert Decision Engine (Cooldown Logic)
+        ↓
+Streamlit UI + Detection Summary
+```
+---
 
-📂 Project Structure
+## Tech Stack
+- **Language:** Python
+- **Deep Learning:** YOLO (Ultralytics)
+- **Computer Vision:** OpenCV
+- **Web Interface:** Streamlit
+- **Numerical Processing:** NumPy
+- **Model Backend:** PyTorch
+
+---
+
+## Project Structure
+
+```text
 VisionGuard/
-│
-├── app.py                 # Streamlit application
-├── detector/
+│── app.py                 # Streamlit application
+│── detector/
 │   ├── yolo_detector.py   # YOLO detection logic
 │   ├── distance.py        # Distance estimation
-│
-├── utils/
+│   └── tracker.py         # Object tracking (optional)
+│── utils/
 │   ├── alerts.py          # Alert & cooldown logic
-│   ├── summary.py         # Detection summary handling
-│
-├── assets/                # Images / videos for testing
-├── requirements.txt
-├── README.md
-└── .gitignore
+│   └── summary.py         # Detection summary handling
+│── assets/                # Images & videos for testing
+│── requirements.txt
+│── README.md
+│── .gitignore
+
+```
 
 
-▶️ How to Run the Project
-1️⃣ Clone the Repository
+##  How to Run the Project
+
+### 1️⃣ Clone the Repository
+```bash
 git clone https://github.com/Vinay-Partap/VisionGuard.git
 cd VisionGuard
-
-2️⃣ Create & Activate Virtual Environment
+```
+### 2️⃣ Create & Activate Virtual Environment
+```bash
 python -m venv .venv
 .venv\Scripts\activate
-
-3️⃣ Install Dependencies
+```
+### 3️⃣ Install Dependencies
+```bash
 pip install -r requirements.txt
-
-4️⃣ Run the Application
+```
+### 4️⃣ Run the Application
+```bash
 streamlit run app.py
+```
+## Usage
+- Launch the application
+- Select Image or Video input
+- Upload a file
+- View detections, proximity alerts, and summary metrics in real time
 
-🧪 Usage
-Select Image Upload or Video Upload
-Upload an image or short video
-The system will detect pedestrians and vehicles
-Alerts will be shown only when a pedestrian is too close
+## Alert Logic
+- Alerts are triggered only when pedestrian distance falls below a predefined threshold
+- Cooldown mechanism prevents repeated alerts in video frames
+- Designed for continuous video processing without alert flooding
 
+## Project Category
+DeepTech / System-Based AI Project
 
-📈 Project Category
-DeepTech & System-Based Project
+## Future Scope
+- Live camera feed integration
+- Audio-based alerts
+- Vehicle speed estimation
+- Edge device deployment
+- Integration with smart traffic systems
 
-
-📌 Future Enhancements
-Real-time camera feed support
-Sound-based alerts
-Vehicle speed estimation
-Lane detection integration
-Deployment on edge devices
-
-
-📜 License
-This project is developed for academic and educational purposes.
-
-✅ READY FOR:
-Teacher evaluation
-Synopsis presentation
-GitHub review
-Future commits
+## License
+This project is developed for academic and research purposes.
