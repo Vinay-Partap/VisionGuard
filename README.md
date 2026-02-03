@@ -76,7 +76,7 @@ VisionGuard/
 │── .gitignore
 
 ```
-
+---
 
 ##  How to Run the Project
 
@@ -98,19 +98,27 @@ pip install -r requirements.txt
 ```bash
 streamlit run app.py
 ```
+---
+
 ## Usage
 - Launch the application
 - Select Image or Video input
 - Upload a file
 - View detections, proximity alerts, and summary metrics in real time
 
+---
+
 ## Alert Logic
 - Alerts are triggered only when pedestrian distance falls below a predefined threshold
 - Cooldown mechanism prevents repeated alerts in video frames
 - Designed for continuous video processing without alert flooding
 
+---
+
 ## Project Category
 DeepTech / System-Based AI Project
+
+---
 
 ## Future Scope
 - Live camera feed integration
@@ -119,5 +127,9 @@ DeepTech / System-Based AI Project
 - Edge device deployment
 - Integration with smart traffic systems
 
+---
+
 ## License
 This project is developed for academic and research purposes.
+
+---
