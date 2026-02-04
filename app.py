@@ -1,85 +1,115 @@
 import streamlit as st
-import tempfile
 import cv2
 import numpy as np
-if "video_running" not in st.session_state:
-    st.session_state.video_running = False
+import time
 
 from detector.yolo_detector import detect_objects
-from utils.summary import init_summary, update_summary
+from utils.alerts import should_alert, play_alert_sound
+from utils.summary import init_summary, reset_summary
 
-st.set_page_config(page_title="VISIONGUARD", layout="wide")
+st.set_page_config(page_title="VisionGuard AI", layout="wide")
 
-# Title
-st.markdown("""
-<h1 style='text-align:center;'>👁️‍🗨️ VISIONGUARD</h1>
-<p style='text-align:center;'>Real-Time Pedestrian & Vehicle Detection System</p>
-""", unsafe_allow_html=True)
+# ---------------- UI HEADER ----------------
+st.title("👁️ VisionGuard AI")
+st.subheader("Real-Time Pedestrian & Vehicle Detection System")
 
-# Initialize summary
-summary = init_summary()
+# ---------------- SESSION STATE ----------------
+if "sound_played" not in st.session_state:
+    st.session_state.sound_played = False
 
-option = st.radio(
+if "last_frame_time" not in st.session_state:
+    st.session_state.last_frame_time = time.time()
+
+# ---------------- INPUT TYPE ----------------
+input_type = st.radio(
     "Select Input Type",
-    ["Upload Image", "Upload Video"]
+    ["Upload Image", "Upload Video", "Live Camera"]
 )
 
-if option == "Upload Image":
-    img_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
+frame_placeholder = st.empty()
+alert_box = st.empty()
+summary_box = st.empty()
 
-    if img_file:
-        image = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
-        frame = cv2.imdecode(image, 1)
+# ---------------- IMAGE MODE ----------------
+if input_type == "Upload Image":
+    image_file = st.file_uploader(
+        "Upload an Image",
+        type=["jpg", "png", "jpeg"]
+    )
 
-        processed_frame, summary = detect_objects(frame, summary)
+    if image_file:
+        image = np.frombuffer(image_file.read(), np.uint8)
+        frame = cv2.imdecode(image, cv2.IMREAD_COLOR)
 
-        st.image(
-            cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB),
-            use_container_width=True
-        )
+        summary = init_summary()
+        frame, alert = detect_objects(frame, summary)
 
-elif option == "Upload Video":
+        frame_placeholder.image(frame, channels="BGR")
+        summary_box.json(summary)
+
+        if alert and should_alert():
+            alert_box.warning("🚨 Pedestrian too close!")
+            play_alert_sound()
+
+# ---------------- VIDEO MODE ----------------
+elif input_type == "Upload Video":
     video_file = st.file_uploader(
         "Upload a Video",
         type=["mp4", "avi", "mov"]
     )
 
-    if video_file and not st.session_state.video_running:
-        st.session_state.video_running = True
+    if video_file:
+        with open("temp_video.mp4", "wb") as f:
+            f.write(video_file.read())
 
-        tfile = tempfile.NamedTemporaryFile(delete=False)
-        tfile.write(video_file.read())
-
-        cap = cv2.VideoCapture(tfile.name)
-        stframe = st.empty()
-
-        summary = {
-            "pedestrians": 0,
-            "vehicles": 0,
-            "total": 0
-        }
+        cap = cv2.VideoCapture("temp_video.mp4")
+        summary = init_summary()
 
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
 
-            frame, summary = detect_objects(frame, summary)
+            frame, alert = detect_objects(frame, summary)
 
-            stframe.image(
-                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
-                use_container_width=True
-            )
+            frame_placeholder.image(frame, channels="BGR")
+            summary_box.json(summary)
+
+            if alert and should_alert():
+                alert_box.warning("🚨 Pedestrian too close!")
+                play_alert_sound()
+
+            time.sleep(0.03)  # smooth playback
 
         cap.release()
 
-        st.markdown("## 📊 Video Detection Summary")
-        st.json(summary)
+# ---------------- LIVE CAMERA MODE ----------------
+elif input_type == "Live Camera":
+    st.info("Click **Start Camera** to begin live detection")
 
-        # ✅ STOP LOOPING
-        st.session_state.video_running = False
+    start_cam = st.checkbox("Start Camera")
 
+    if start_cam:
+        cap = cv2.VideoCapture(0)
+        summary = init_summary()
 
+        if not cap.isOpened():
+            st.error("Camera not accessible")
+        else:
+            while start_cam:
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-st.markdown("## 📊 Detection Summary")
-st.json(summary)
+                frame, alert = detect_objects(frame, summary)
+
+                frame_placeholder.image(frame, channels="BGR")
+                summary_box.json(summary)
+
+                if alert and should_alert():
+                    alert_box.warning("🚨 Pedestrian too close!")
+                    play_alert_sound()
+
+                time.sleep(0.03)
+
+            cap.release()

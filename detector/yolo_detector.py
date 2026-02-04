@@ -1,53 +1,57 @@
+# detector/yolo_detector.py
+
 import cv2
 from ultralytics import YOLO
+from detector.distance import estimate_distance
 
-from detector.distance import estimate_distance, is_near
-from utils.alerts import show_alert, should_alert
-
-# Load YOLO model
+# Load stable YOLO model
 model = YOLO("yolov8n.pt")
 
-# Class IDs
-HUMAN_CLASS = 0
-VEHICLE_CLASSES = [1, 2, 3, 5, 7]
+PEDESTRIAN_CLASS_ID = 0
+VEHICLE_CLASS_IDS = [2, 3, 5, 7]  # car, bike, bus, truck
 
 
 def detect_objects(frame, summary):
-    results = model.predict(frame, conf=0.4)[0]
+    results = model(frame, verbose=False)[0]
+
+    alert_triggered = False
 
     for box in results.boxes:
+        cls_id = int(box.cls[0])
         x1, y1, x2, y2 = map(int, box.xyxy[0])
-        cls = int(box.cls[0])
-        conf = float(box.conf[0])
+        height = y2 - y1
 
-        # -------- PEDESTRIAN --------
-        if cls == HUMAN_CLASS:
-            distance = estimate_distance(x1, x2)
-            near = is_near(distance)
+        label = None
+        color = (0, 255, 0)
 
-            color = (0, 0, 255) if near else (255, 0, 0)
+        # Pedestrian
+        if cls_id == PEDESTRIAN_CLASS_ID:
+            distance = estimate_distance(height)
+            label = f"Pedestrian {distance}m"
+            color = (0, 0, 255)
 
+            summary["pedestrians"] += 1
+            summary["total"] += 1
+
+            if distance and distance < 2.0:
+                alert_triggered = True
+
+        # Vehicle
+        elif cls_id in VEHICLE_CLASS_IDS:
+            label = "Vehicle"
+            summary["vehicles"] += 1
+            summary["total"] += 1
+
+        if label:
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             cv2.putText(
                 frame,
-                f"Pedestrian {distance:.2f}m",
+                label,
                 (x1, y1 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
                 color,
-                2
+                2,
             )
 
-            summary["pedestrians"] += 1
-
-            # ✅ ALERT WITH COOLDOWN
-            if near and should_alert():
-                show_alert()
-
-        # -------- VEHICLE --------
-        elif cls in VEHICLE_CLASSES:
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            summary["vehicles"] += 1
-
-    summary["total"] = summary["pedestrians"] + summary["vehicles"]
-    return frame, summary
+    return frame, alert_triggered

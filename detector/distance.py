@@ -1,11 +1,16 @@
-KNOWN_WIDTH = 0.5
-FOCAL_LENGTH = 700
+# detector/distance.py
 
-def estimate_distance(x1, x2):
-    pixel_width = x2 - x1
-    if pixel_width == 0:
-        return 999
-    return (KNOWN_WIDTH * FOCAL_LENGTH) / pixel_width
+def estimate_distance(bbox_height, known_height=1.7, focal_length=600):
+    """
+    Estimate distance of object from camera using bounding box height.
 
-def is_near(distance, threshold=4.0):
-    return distance < threshold
+    bbox_height: height of bounding box in pixels
+    known_height: average human height (meters)
+    focal_length: camera focal length (approx)
+    """
+
+    if bbox_height <= 0:
+        return None
+
+    distance = (known_height * focal_length) / bbox_height
+    return round(distance, 2)

@@ -1,27 +1,28 @@
+# utils/alerts.py
 import time
 import streamlit as st
 
-# Cooldown time between alerts (seconds)
-ALERT_COOLDOWN = 3
-
-_last_alert_time = 0
-
+ALERT_COOLDOWN = 3  # seconds
 
 def should_alert():
-    """
-    Returns True only if enough time has passed since the last alert.
-    """
-    global _last_alert_time
-    current_time = time.time()
+    """Cooldown-based alert control"""
+    now = time.time()
 
-    if current_time - _last_alert_time > ALERT_COOLDOWN:
-        _last_alert_time = current_time
+    if "last_alert_time" not in st.session_state:
+        st.session_state.last_alert_time = 0
+
+    if now - st.session_state.last_alert_time > ALERT_COOLDOWN:
+        st.session_state.last_alert_time = now
         return True
+
     return False
 
 
-def show_alert():
-    """
-    Displays a warning alert in Streamlit UI.
-    """
-    st.warning("🚨 ALERT: Pedestrian too close!")
+def play_alert_sound():
+    """Browser-safe alert sound"""
+    if "alert_played" not in st.session_state:
+        st.session_state.alert_played = False
+
+    if not st.session_state.alert_played:
+        st.audio("assets/alert.wav", format="audio/wav")
+        st.session_state.alert_played = True
