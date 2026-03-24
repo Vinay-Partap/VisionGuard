@@ -1,18 +1,17 @@
 # detector/yolo_detector.py
-import cv2
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 from ultralytics import YOLO
 from detector.distance import estimate_distance
 from utils.summary import log_detection
 
-# Load stable YOLO model
 model = YOLO("yolov8n.pt")
 
 PEDESTRIAN_CLASS_ID = 0
-VEHICLE_CLASS_IDS = [2, 3, 5, 7]  # car, bike, bus, truck
+VEHICLE_CLASS_IDS = [2, 3, 5, 7]
 
 
 def get_risk(distance):
-    """Return risk level string based on distance."""
     if distance is None:
         return "low"
     if distance < 4.0:
@@ -23,26 +22,30 @@ def get_risk(distance):
 
 
 def get_bbox_color(risk):
-    """Return BGR color based on risk level."""
     return {
-        "high":   (0, 0, 255),    # Red
-        "medium": (0, 165, 255),  # Orange
-        "low":    (0, 255, 0),    # Green
-    }.get(risk, (0, 255, 0))
+        "high":   "#FF0000",
+        "medium": "#FFA500",
+        "low":    "#00FF00",
+    }.get(risk, "#00FF00")
 
 
 def detect_objects(frame, summary, confidence_threshold=0.4, proximity_threshold=7.0):
+    """
+    frame: numpy array (H, W, 3) in RGB
+    returns: numpy array (RGB), alert bool
+    """
+    pil_img = Image.fromarray(frame)
+    draw = ImageDraw.Draw(pil_img)
+
     results = model(frame, verbose=False, conf=confidence_threshold)[0]
     alert_triggered = False
 
     for box in results.boxes:
         cls_id = int(box.cls[0])
         x1, y1, x2, y2 = map(int, box.xyxy[0])
-        height = y2 - y1
-        label = None
 
-        # Pedestrian
         if cls_id == PEDESTRIAN_CLASS_ID:
+            height = y2 - y1
             distance = estimate_distance(height)
             risk = get_risk(distance)
             color = get_bbox_color(risk)
@@ -56,24 +59,21 @@ def detect_objects(frame, summary, confidence_threshold=0.4, proximity_threshold
                 alert_triggered = True
                 summary["alerts"] += 1
 
-        # Vehicle
         elif cls_id in VEHICLE_CLASS_IDS:
-            color = (255, 200, 0)  # Blue-yellow for vehicles
+            color = "#FFD700"
             label = "Vehicle"
             summary["vehicles"] += 1
             summary["total"] += 1
             log_detection(summary, "Vehicle")
+        else:
+            continue
 
-        if label:
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            # Background for label text
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-            cv2.rectangle(frame, (x1, y1 - th - 8), (x1 + tw + 4, y1), color, -1)
-            cv2.putText(
-                frame, label,
-                (x1 + 2, y1 - 4),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55, (255, 255, 255), 2,
-            )
+        # Draw bounding box
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
 
-    return frame, alert_triggered
+        # Draw label background + text
+        text_bbox = draw.textbbox((x1, y1 - 18), label)
+        draw.rectangle(text_bbox, fill=color)
+        draw.text((x1, y1 - 18), label, fill="white")
+
+    return np.array(pil_img), alert_triggered
