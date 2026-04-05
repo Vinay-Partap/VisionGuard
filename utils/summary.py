@@ -8,6 +8,8 @@ def init_summary():
         "vehicles": 0,
         "total": 0,
         "alerts": 0,
+        "high_risk_count": 0,   # NEW: for road report scoring
+        "zone_triggers": 0,     # NEW: danger zone hits
         "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "detection_log": []
     }
@@ -22,6 +24,9 @@ def log_detection(summary, detection_type, distance=None, risk=None):
     summary["detection_log"].append({
         "time": datetime.now().strftime("%H:%M:%S"),
         "type": detection_type,
-        "distance_m": str(round(distance, 2)) if distance is not None else "N/A",  # always string
+        "distance_m": str(round(distance, 2)) if distance is not None else "N/A",
         "risk": risk or "low"
     })
+    # Track high risk count for road reports
+    if risk == "high":
+        summary["high_risk_count"] += 1
