@@ -1,90 +1,120 @@
-# app.py  — cv2-free, works on Python 3.14
+# app.py  (deploy branch — cv2-free, PIL only, no live camera)
+# ORIGINAL image + video logic preserved exactly.
+# ADDED: login gate, navigation sidebar, new pages as extra elif blocks.
 import streamlit as st
 import numpy as np
 import time
 import pandas as pd
 from datetime import datetime
 from PIL import Image
-from detector.yolo_detector import detect_objects
+
+# ── Auth (new) ─────────────────────────────────────────────────────────────
+from auth.auth import (
+    is_logged_in, current_user, is_admin, show_login_page, logout,
+    add_user, delete_user, list_users,
+)
+
+# ── Original imports (unchanged) ───────────────────────────────────────────
+from detector.yolo_detector import (
+    detect_objects, reset_tracker, get_speed_estimator,
+)
 from utils.alerts import should_alert, play_alert_sound
 from utils.summary import init_summary
 
+# ── New feature imports ────────────────────────────────────────────────────
+from utils.heatmap import HeatmapAccumulator
+from utils.danger_zones import DangerZoneManager
+from reports.road_report import (
+    start_session, end_session, generate_report,
+    get_all_sessions_df, get_road_names, export_report_txt,
+)
+
 st.set_page_config(page_title="VisionGuard AI", layout="wide", page_icon="👁️")
 
+# ── CSS (original + new road report classes) ───────────────────────────────
 st.markdown("""
 <style>
-    .alert-high { background:#ff4b4b22; border-left:4px solid #ff4b4b; padding:10px 16px; border-radius:4px; }
+    .alert-high  { background:#ff4b4b22; border-left:4px solid #ff4b4b; padding:10px 16px; border-radius:4px; }
     .risk-high   { color:#ff4b4b; font-weight:600; }
     .risk-medium { color:#ffa500; font-weight:600; }
     .risk-low    { color:#21c55d; font-weight:600; }
+    .road-safe    { background:rgba(33,197,93,.08);  border-left:4px solid #21c55d; padding:.6rem 1rem; border-radius:4px; margin:.4rem 0; }
+    .road-caution { background:rgba(255,165,0,.08);  border-left:4px solid #ffa500; padding:.6rem 1rem; border-radius:4px; margin:.4rem 0; }
+    .road-avoid   { background:rgba(255,75,75,.08);  border-left:4px solid #ff4b4b; padding:.6rem 1rem; border-radius:4px; margin:.4rem 0; }
+    .user-badge   { font-size:.75rem; color:#888; background:#1e1e2e; border:1px solid #2e2e4e; border-radius:4px; padding:.2rem .6rem; display:inline-block; margin-bottom:.5rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── SIDEBAR ──────────────────────────────────────────────────────────────────
+# ── Auth gate ──────────────────────────────────────────────────────────────
+if not is_logged_in():
+    show_login_page()
+    st.stop()
+
+user = current_user()
+
+# ── Sidebar ────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.image("https://img.icons8.com/fluency/96/eye.png", width=60)
     st.title("VisionGuard AI")
     st.caption("Real-Time Detection System")
+    st.markdown(
+        f'<div class="user-badge">👤 {user["display_name"]} | {user["role"].upper()}</div>',
+        unsafe_allow_html=True,
+    )
     st.divider()
-    st.subheader("⚙️ Detection Settings")
-    confidence_threshold = st.slider("Confidence threshold", 0.1, 0.9, 0.4, 0.05)
-    proximity_threshold  = st.slider("Alert distance (meters)", 1.0, 20.0, 7.0, 0.5)
-    sound_enabled = st.toggle("🔊 Alert sound", value=True)
-    st.divider()
-    st.subheader("🎨 Risk color legend")
-    st.markdown('<span class="risk-high">● HIGH</span> &nbsp; < 4m', unsafe_allow_html=True)
-    st.markdown('<span class="risk-medium">● MEDIUM</span> &nbsp; 4–7m', unsafe_allow_html=True)
-    st.markdown('<span class="risk-low">● LOW</span> &nbsp; > 7m', unsafe_allow_html=True)
-    st.divider()
-    st.markdown("""
-    **VisionGuard AI** detects pedestrians and vehicles using YOLOv8.
-    - 🚶 Proximity-based alerts
-    - 🚗 Vehicle detection
-    - 📊 Live analytics
-    - 📥 CSV & report export
 
-    Built with YOLOv8 · Streamlit
-    """)
+    # Navigation
+    pages = ["🎯 Detection", "🌡️ Heatmap", "⚠️ Danger Zones",
+             "📊 Reports", "📋 Sessions"]
+    if is_admin():
+        pages.append("🔧 Admin")
+    page = st.radio("Navigation", pages, label_visibility="collapsed")
+    st.divider()
+
+    # Detection settings — only shown on Detection page
+    if "Detection" in page:
+        st.subheader("⚙️ Detection Settings")
+
+        road_name = st.text_input(
+            "📍 Road / Location",
+            value=st.session_state.get("road_name", ""),
+            placeholder="e.g. NH-48 Sector 15",
+        )
+        st.session_state.road_name = road_name
+
+        # Original sliders — unchanged
+        confidence_threshold = st.slider("Confidence threshold", 0.1, 0.9, 0.4, 0.05)
+        proximity_threshold  = st.slider("Alert distance (meters)", 1.0, 20.0, 7.0, 0.5)
+        sound_enabled        = st.toggle("🔊 Alert sound", value=True)
+
+        # New toggles
+        show_heatmap = st.toggle("🌡️ Heatmap overlay", value=False)
+        show_zones   = st.toggle("⚠️ Danger zones overlay", value=True)
+        speed_limit  = st.slider("🚗 Speed limit (km/h)", 10, 120, 30, 5)
+        pixels_per_m = st.slider("📏 Pixels per metre", 10, 100, 40, 5,
+                                  help="Calibration for speed estimation")
+        st.divider()
+        st.subheader("🎨 Risk color legend")
+        st.markdown('<span class="risk-high">● HIGH</span> &nbsp; < 4m',   unsafe_allow_html=True)
+        st.markdown('<span class="risk-medium">● MEDIUM</span> &nbsp; 4–7m', unsafe_allow_html=True)
+        st.markdown('<span class="risk-low">● LOW</span> &nbsp; > 7m',     unsafe_allow_html=True)
+
+    st.divider()
+    if st.button("🔓 Logout", use_container_width=True):
+        logout()
     st.caption("VisionGuard AI v2.0")
 
-# ── SESSION STATE ─────────────────────────────────────────────────────────────
-if "summary" not in st.session_state:
-    st.session_state.summary = init_summary()
-if "fps_list" not in st.session_state:
-    st.session_state.fps_list = []
-if "last_frame_time" not in st.session_state:
-    st.session_state.last_frame_time = time.time()
+# ── Session state ──────────────────────────────────────────────────────────
+if "summary"         not in st.session_state: st.session_state.summary         = init_summary()
+if "fps_list"        not in st.session_state: st.session_state.fps_list        = []
+if "last_frame_time" not in st.session_state: st.session_state.last_frame_time = time.time()
+if "heatmap_acc"     not in st.session_state: st.session_state.heatmap_acc     = HeatmapAccumulator()
+if "zone_mgr"        not in st.session_state: st.session_state.zone_mgr        = DangerZoneManager()
+if "active_session"  not in st.session_state: st.session_state.active_session  = None
 
-# ── HEADER ────────────────────────────────────────────────────────────────────
-st.title("👁️ VisionGuard AI")
-st.subheader("Real-Time Pedestrian & Vehicle Detection System")
-st.divider()
-
-# ── METRICS ───────────────────────────────────────────────────────────────────
-m1, m2, m3, m4, m5 = st.columns(5)
-ped_m  = m1.empty()
-veh_m  = m2.empty()
-alr_m  = m3.empty()
-fps_m  = m4.empty()
-tot_m  = m5.empty()
-
-def update_metrics(summary, fps=0.0):
-    ped_m.metric("🚶 Pedestrians", summary["pedestrians"])
-    veh_m.metric("🚗 Vehicles",    summary["vehicles"])
-    alr_m.metric("🚨 Alerts",      summary["alerts"])
-    fps_m.metric("⚡ FPS",          f"{fps:.1f}")
-    tot_m.metric("📦 Total",        summary["total"])
-
-update_metrics(st.session_state.summary)
-st.divider()
-
-input_type = st.radio("Select input type", ["Upload Image", "Upload Video"], horizontal=True)
-frame_placeholder = st.empty()
-alert_box         = st.empty()
-
-# ── HELPERS ───────────────────────────────────────────────────────────────────
+# ── Helpers (original functions, unchanged) ────────────────────────────────
 def compute_fps():
-    now = time.time()
+    now     = time.time()
     elapsed = now - st.session_state.last_frame_time
     st.session_state.last_frame_time = now
     fps = 1.0 / max(elapsed, 0.001)
@@ -93,24 +123,33 @@ def compute_fps():
         st.session_state.fps_list.pop(0)
     return round(sum(st.session_state.fps_list) / len(st.session_state.fps_list), 1)
 
+
+def update_metrics(summary, fps=0.0):
+    ped_m.metric("🚶 Pedestrians", summary["pedestrians"])
+    veh_m.metric("🚗 Vehicles",    summary["vehicles"])
+    alr_m.metric("🚨 Alerts",      summary["alerts"])
+    fps_m.metric("⚡ FPS",          f"{fps:.1f}")
+    tot_m.metric("📦 Total",        summary["total"])
+
+
 def trigger_alert(summary):
     alert_box.markdown(
         '<div class="alert-high">🚨 <b>Pedestrian too close! Immediate danger.</b></div>',
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
     if sound_enabled:
         play_alert_sound()
+
 
 def export_csv(summary):
     if not summary["detection_log"]:
         return None
     return pd.DataFrame(summary["detection_log"]).to_csv(index=False).encode("utf-8")
 
+
 def export_txt(summary):
     lines = [
-        "=" * 50,
-        "       VISIONGUARD AI — DETECTION REPORT",
-        "=" * 50,
+        "=" * 50, "       VISIONGUARD AI — DETECTION REPORT", "=" * 50,
         f"Session start : {summary['start_time']}",
         f"Report time   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "", "SUMMARY", "-" * 30,
@@ -121,22 +160,34 @@ def export_txt(summary):
         "", "DETECTION LOG", "-" * 30,
     ]
     for e in summary["detection_log"]:
-        lines.append(f"  [{e['time']}]  {e['type']:12s}  dist={e['distance_m']}m  risk={e['risk'].upper()}")
+        lines.append(
+            f"  [{e['time']}]  {e['type']:12s}"
+            f"  dist={e['distance_m']}m  risk={e['risk'].upper()}"
+        )
     lines += ["", "=" * 50, "  Generated by VisionGuard AI v2.0", "=" * 50]
     return "\n".join(lines).encode("utf-8")
 
+
 def show_log_and_export(summary):
+    """Original helper — unchanged."""
     st.divider()
     st.subheader("📋 Detection history log")
     if summary["detection_log"]:
         df = pd.DataFrame(summary["detection_log"])
         df.columns = ["Time", "Type", "Distance (m)", "Risk"]
         df["Distance (m)"] = df["Distance (m)"].astype(str)
+
         def color_risk(val):
-            return {"high": "color:#ff4b4b", "medium": "color:#ffa500", "low": "color:#21c55d"}.get(str(val).lower(), "")
-        st.dataframe(df.style.map(color_risk, subset=["Risk"]), use_container_width=True, hide_index=True)
+            return {"high": "color:#ff4b4b", "medium": "color:#ffa500",
+                    "low": "color:#21c55d"}.get(str(val).lower(), "")
+
+        st.dataframe(
+            df.style.map(color_risk, subset=["Risk"]),
+            use_container_width=True, hide_index=True,
+        )
     else:
         st.info("No detections yet.")
+
     st.divider()
     st.subheader("📥 Export report")
     c1, c2 = st.columns(2)
@@ -153,59 +204,364 @@ def show_log_and_export(summary):
             file_name=f"visionguard_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
             mime="text/plain", use_container_width=True)
 
-# ── IMAGE MODE ────────────────────────────────────────────────────────────────
-if input_type == "Upload Image":
-    if st.button("🔄 Reset session"):
-        st.session_state.summary = init_summary()
-        st.rerun()
 
-    image_file = st.file_uploader("Upload an image", type=["jpg", "png", "jpeg"])
-    if image_file:
-        pil_img = Image.open(image_file).convert("RGB")
-        frame   = np.array(pil_img)
-        summary = st.session_state.summary
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: DETECTION  (original logic — only detect_objects call gets new args)
+# ══════════════════════════════════════════════════════════════════════════════
+if "Detection" in page:
+    st.title("👁️ VisionGuard AI")
+    st.subheader("Real-Time Pedestrian & Vehicle Detection System")
+    st.divider()
 
-        t0 = time.time()
-        frame, alert = detect_objects(frame, summary, confidence_threshold, proximity_threshold)
-        fps = round(1.0 / max(time.time() - t0, 0.001), 1)
+    # Metrics row (original)
+    m1, m2, m3, m4, m5 = st.columns(5)
+    ped_m = m1.empty(); veh_m = m2.empty(); alr_m = m3.empty()
+    fps_m = m4.empty(); tot_m = m5.empty()
+    update_metrics(st.session_state.summary)
+    st.divider()
 
-        frame_placeholder.image(frame, width="stretch")
-        update_metrics(summary, fps)
+    # Input type (original — no Live Camera on deploy branch)
+    input_type        = st.radio("Select input type",
+                                 ["Upload Image", "Upload Video"], horizontal=True)
+    frame_placeholder = st.empty()
+    alert_box         = st.empty()
 
-        if alert and should_alert():
-            trigger_alert(summary)
+    # Convenience refs
+    zone_mgr    = st.session_state.zone_mgr if show_zones else None
+    heatmap_acc = st.session_state.heatmap_acc
 
-        show_log_and_export(summary)
+    # ── IMAGE MODE (original logic, detect_objects gets new optional args) ──
+    if input_type == "Upload Image":
+        if st.button("🔄 Reset session"):
+            st.session_state.summary = init_summary()
+            reset_tracker()
+            st.rerun()
 
-# ── VIDEO MODE ────────────────────────────────────────────────────────────────
-elif input_type == "Upload Video":
-    if st.button("🔄 Reset session"):
-        st.session_state.summary = init_summary()
-        st.rerun()
+        image_file = st.file_uploader("Upload an image", type=["jpg", "png", "jpeg"])
+        if image_file:
+            pil_img = Image.open(image_file).convert("RGB")
+            frame   = np.array(pil_img)
+            summary = st.session_state.summary
 
-    video_file = st.file_uploader("Upload a video", type=["mp4", "avi", "mov"])
-    if video_file:
-        # cv2 used only here for video — import locally so image mode still works
-        import cv2
-        with open("temp_video.mp4", "wb") as f:
-            f.write(video_file.read())
+            t0 = time.time()
+            frame, alert = detect_objects(
+                frame, summary, confidence_threshold, proximity_threshold,
+                zone_manager=zone_mgr,
+                show_heatmap=show_heatmap,
+                heatmap_acc=heatmap_acc,
+                pixels_per_meter=pixels_per_m,
+            )
+            fps = round(1.0 / max(time.time() - t0, 0.001), 1)
 
-        summary = st.session_state.summary
-        cap = cv2.VideoCapture("temp_video.mp4")
-
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            # cv2 gives BGR — convert to RGB for PIL-based detector
-            frame_rgb = frame[:, :, ::-1]
-            frame_rgb, alert = detect_objects(frame_rgb, summary, confidence_threshold, proximity_threshold)
-            fps = compute_fps()
-            frame_placeholder.image(frame_rgb, width="stretch")
+            frame_placeholder.image(frame, use_container_width=True)
             update_metrics(summary, fps)
             if alert and should_alert():
                 trigger_alert(summary)
-            time.sleep(0.03)
+            show_log_and_export(summary)
 
-        cap.release()
-        show_log_and_export(summary)
+    # ── VIDEO MODE (original logic + session saving) ────────────────────────
+    elif input_type == "Upload Video":
+        if st.button("🔄 Reset session"):
+            st.session_state.summary        = init_summary()
+            st.session_state.active_session = None
+            reset_tracker()
+            st.rerun()
+
+        video_file = st.file_uploader("Upload a video", type=["mp4", "avi", "mov"])
+        if video_file:
+            road = st.session_state.get("road_name", "").strip()
+            if not road:
+                st.warning("⚠️ Enter a Road / Location name in the sidebar to save this session to reports.")
+
+            # cv2 used only here for video reading (original pattern)
+            import cv2
+            with open("temp_video.mp4", "wb") as f:
+                f.write(video_file.read())
+
+            summary = st.session_state.summary
+
+            # Start road report session
+            if st.session_state.active_session is None and road:
+                st.session_state.active_session = start_session(road, user["username"])
+                st.session_state.summary        = init_summary()
+                summary                         = st.session_state.summary
+
+            cap      = cv2.VideoCapture("temp_video.mp4")
+            stop_btn = st.button("⏹️ Stop & Save")
+
+            while cap.isOpened():
+                ret, frame_bgr = cap.read()
+                if not ret or stop_btn:
+                    break
+
+                # cv2 gives BGR → convert to RGB (original pattern)
+                frame_rgb = frame_bgr[:, :, ::-1]
+                frame_rgb, alert = detect_objects(
+                    frame_rgb, summary, confidence_threshold, proximity_threshold,
+                    zone_manager=zone_mgr,
+                    show_heatmap=show_heatmap,
+                    heatmap_acc=heatmap_acc,
+                    pixels_per_meter=pixels_per_m,
+                )
+                fps = compute_fps()
+                frame_placeholder.image(frame_rgb, use_container_width=True)
+                update_metrics(summary, fps)
+                if alert and should_alert():
+                    trigger_alert(summary)
+                time.sleep(0.03)
+
+            cap.release()
+
+            # Save session to road reports
+            if st.session_state.active_session:
+                spd_stats = get_speed_estimator().summary_stats()
+                finished  = end_session(st.session_state.active_session, summary, spd_stats)
+                st.session_state.active_session = None
+                st.success(f"✅ Session saved — **{finished['road_name']}** | {finished['duration_minutes']} min")
+
+            show_log_and_export(summary)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: HEATMAP
+# ══════════════════════════════════════════════════════════════════════════════
+elif "Heatmap" in page:
+    st.title("🌡️ Density Heatmap")
+    st.caption("Accumulates pedestrian & vehicle hotspots across frames. Enable the sidebar toggle in Detection to build it up.")
+
+    heatmap_acc = st.session_state.heatmap_acc
+    stats       = heatmap_acc.stats()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🔥 Max Heat",     f"{stats['max_heat']:.3f}")
+    c2.metric("🌡️ Mean Heat",   f"{stats['mean_heat']:.5f}")
+    c3.metric("🎯 Hotspot %",    f"{stats['hotspot_pct']:.1f}%")
+    c4.metric("📍 Total Points", stats["total"])
+
+    st.divider()
+    st.info("Run **Detection** with the 🌡️ Heatmap overlay toggle enabled — the heatmap accumulates across every frame you process.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        upload = st.file_uploader("Quick preview — upload an image", type=["jpg", "png", "jpeg"])
+        if upload:
+            pil_img = Image.open(upload).convert("RGB")
+            frame   = np.array(pil_img)
+            from utils.summary import init_summary as _is
+            tmp_sm = _is()
+            for _ in range(3):  # run 3 times to accumulate heat
+                detect_objects(frame.copy(), tmp_sm, 0.4, 7.0,
+                               heatmap_acc=heatmap_acc, show_heatmap=False)
+            heat_frame = heatmap_acc.composite_on(pil_img)
+            st.image(heat_frame, caption="Heatmap overlay", use_container_width=True)
+    with col2:
+        st.markdown("""
+        **Colour scale**
+        - 🔵 Blue — Low activity
+        - 🟡 Yellow — Moderate
+        - 🔴 Red — High / danger hotspot
+        """)
+        if st.button("🔄 Reset Heatmap"):
+            st.session_state.heatmap_acc.reset()
+            st.success("Heatmap cleared.")
+            st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: DANGER ZONES
+# ══════════════════════════════════════════════════════════════════════════════
+elif "Danger Zones" in page:
+    st.title("⚠️ Custom Danger Zones (ROI)")
+    zone_mgr = st.session_state.zone_mgr
+
+    if not is_admin():
+        st.warning("🔒 Zone editing requires Admin access. Zones are still shown during detection.")
+
+    st.subheader("Active Zones")
+    zones = zone_mgr.list_zones()
+    if not zones:
+        st.info("No danger zones defined yet.")
+    else:
+        for zone in zones:
+            ca, cb, cc = st.columns([4, 1, 1])
+            sens_icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(zone.sensitivity, "")
+            status    = "🟢 Active" if zone.active else "⚫ Inactive"
+            ca.markdown(f"**{zone.name}** {sens_icon} | {status} | `{zone.zone_id}`")
+            if is_admin():
+                with cb:
+                    if st.button("Toggle", key=f"tog_{zone.zone_id}"):
+                        zone_mgr.toggle_zone(zone.zone_id); st.rerun()
+                with cc:
+                    if st.button("Delete", key=f"del_{zone.zone_id}"):
+                        zone_mgr.remove_zone(zone.zone_id); st.rerun()
+
+    if is_admin():
+        st.divider()
+        st.subheader("➕ Add New Zone")
+        st.info(
+            "Use **normalised coordinates (0.0–1.0)** — (0,0) = top-left, (1,1) = bottom-right. "
+            "Separate points with `|`.\n\n"
+            "Example crosswalk: `0.2,0.7 | 0.8,0.7 | 0.8,1.0 | 0.2,1.0`"
+        )
+        with st.form("add_zone"):
+            zname   = st.text_input("Zone name", placeholder="e.g. School Crosswalk")
+            zpts    = st.text_input("Points", placeholder="0.1,0.7 | 0.9,0.7 | 0.9,1.0 | 0.1,1.0")
+            zcol1, zcol2 = st.columns(2)
+            zsens   = zcol1.selectbox("Sensitivity", ["high", "medium", "low"])
+            zcolor  = zcol2.color_picker("Colour", "#FF4444")
+            if st.form_submit_button("Add Zone"):
+                try:
+                    pts = [tuple(float(v) for v in p.strip().split(","))
+                           for p in zpts.split("|")]
+                    if len(pts) < 3:
+                        st.error("Need at least 3 points.")
+                    else:
+                        zone_mgr.add_zone(zname, pts, zcolor, zsens)
+                        st.success(f"Zone '{zname}' added!")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Invalid input: {e}")
+
+        if st.button("📍 Load example zones"):
+            for dz in zone_mgr.default_zones():
+                zone_mgr.add_zone(dz["name"], dz["points"], dz["color_hex"], dz["sensitivity"])
+            st.success("Example zones loaded.")
+            st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: REPORTS
+# ══════════════════════════════════════════════════════════════════════════════
+elif "Reports" in page:
+    st.title("📊 Road Safety Reports")
+    st.caption("Sessions are saved automatically when you run video detection with a road name set.")
+
+    period = st.selectbox("Report period", [7, 15, 30], index=1,
+                          format_func=lambda x: f"Last {x} days")
+
+    if st.button("🔄 Generate Report", type="primary"):
+        with st.spinner("Analysing road safety data..."):
+            report = generate_report(period)
+        st.session_state.last_report = report
+
+    report = st.session_state.get("last_report")
+
+    if report and "error" not in report:
+        b1, b2, b3 = st.columns(3)
+        b1.metric("📍 Roads Analysed", report["roads_analyzed"])
+        b2.metric("📹 Sessions",        report["total_sessions"])
+        b3.metric("📅 Period",          f"{report['period_days']} days")
+
+        st.markdown(f"""
+        <div style="display:flex;gap:1rem;margin:1rem 0;">
+          <div style="flex:1;background:rgba(33,197,93,.08);border:1px solid #21c55d;
+               border-radius:8px;padding:1rem;text-align:center;">
+            <div style="font-size:.75rem;color:#666;">🏆 SAFEST ROAD</div>
+            <div style="font-size:1.3rem;color:#21c55d;font-weight:700;">{report['safest_road']}</div>
+          </div>
+          <div style="flex:1;background:rgba(255,75,75,.08);border:1px solid #ff4b4b;
+               border-radius:8px;padding:1rem;text-align:center;">
+            <div style="font-size:.75rem;color:#666;">⚠️ RISKIEST ROAD</div>
+            <div style="font-size:1.3rem;color:#ff4b4b;font-weight:700;">{report['riskiest_road']}</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.divider()
+        st.subheader("Road-by-Road Analysis")
+        for road in report["roads"]:
+            css = road["css"]
+            st.markdown(
+                f'<div class="road-{css}"><b>{road["road_name"]}</b> — '
+                f'Score: <b>{road["safety_score"]}/100</b> &nbsp; {road["recommendation"]}'
+                f'<br><small>{road["advice"]}</small></div>',
+                unsafe_allow_html=True,
+            )
+            with st.expander(f"📈 {road['road_name']} — detailed stats"):
+                d1, d2, d3, d4, d5, d6 = st.columns(6)
+                d1.metric("Sessions",   road["sessions"])
+                d2.metric("Time (min)", road["duration_min"])
+                d3.metric("Detections", road["detections"])
+                d4.metric("High Risk",  road["high_risk"])
+                d5.metric("Avg Speed",  f"{road['avg_speed']} km/h")
+                d6.metric("Speeding",   road["speeding"])
+
+        st.divider()
+        st.download_button(
+            "⬇️ Download Full Report (.txt)",
+            export_report_txt(report).encode(),
+            f"visionguard_road_report_{datetime.now().strftime('%Y%m%d')}.txt",
+            "text/plain", use_container_width=True,
+        )
+        if report["roads"]:
+            st.divider()
+            st.subheader("Safety Score Ranking")
+            df_chart = pd.DataFrame(report["roads"])[["road_name", "safety_score"]]
+            st.bar_chart(df_chart.set_index("road_name")["safety_score"])
+
+    elif report and "error" in report:
+        st.warning(f"⚠️ {report['error']}")
+        st.info("Go to **Detection** → enter a road name → upload a video to log sessions.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: SESSIONS
+# ══════════════════════════════════════════════════════════════════════════════
+elif "Sessions" in page:
+    st.title("📋 Session History")
+    df = get_all_sessions_df()
+    if df.empty:
+        st.info("No sessions recorded yet. Upload a video with a road name set to begin logging.")
+    else:
+        roads    = ["All Roads"] + get_road_names()
+        sel_road = st.selectbox("Filter by road", roads)
+        if sel_road != "All Roads":
+            df = df[df["road_name"] == sel_road]
+
+        cols      = ["session_id", "road_name", "start_time", "duration_minutes",
+                     "total_detections", "pedestrian_count", "vehicle_count",
+                     "high_risk_count", "alert_count", "avg_speed_kmh", "speeding_violations"]
+        show_cols = [c for c in cols if c in df.columns]
+        st.dataframe(df[show_cols].head(100), use_container_width=True, hide_index=True)
+        st.download_button("⬇️ Export Sessions CSV",
+                           df.to_csv(index=False).encode(),
+                           "visionguard_sessions.csv", "text/csv",
+                           use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: ADMIN
+# ══════════════════════════════════════════════════════════════════════════════
+elif "Admin" in page and is_admin():
+    st.title("🔧 Admin Panel")
+
+    st.subheader("User Management")
+    users = list_users()
+    st.dataframe(pd.DataFrame(users), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("Add New User")
+    with st.form("add_user"):
+        nu  = st.text_input("Username")
+        np_ = st.text_input("Password", type="password")
+        nd  = st.text_input("Display Name")
+        nr  = st.selectbox("Role", ["viewer", "admin"])
+        if st.form_submit_button("Add User"):
+            if nu and np_:
+                add_user(nu, np_, nr, nd or nu)
+                st.success(f"User '{nu}' added.")
+                st.rerun()
+            else:
+                st.error("Username and password required.")
+
+    st.divider()
+    st.subheader("Delete User")
+    del_opts = [u["username"] for u in users if u["username"] != user["username"]]
+    if del_opts:
+        del_u = st.selectbox("Select user to delete", del_opts)
+        if st.button("🗑️ Delete", type="primary"):
+            delete_user(del_u)
+            st.success(f"'{del_u}' deleted.")
+            st.rerun()
+    else:
+        st.info("No other users to delete.")

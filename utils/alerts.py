@@ -1,11 +1,10 @@
-# utils/alerts.py — cross-platform, works on Windows (local) and Linux (cloud)
+# utils/alerts.py  (deploy branch — cross-platform, unchanged)
 import time
 import streamlit as st
 import streamlit.components.v1 as components
 import platform
 
 ALERT_COOLDOWN = 3
-
 
 def should_alert():
     now = time.time()
@@ -15,7 +14,6 @@ def should_alert():
         st.session_state.last_alert_time = now
         return True
     return False
-
 
 def play_alert_sound():
     if platform.system() == "Windows":
