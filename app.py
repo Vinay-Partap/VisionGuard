@@ -102,7 +102,7 @@ with st.sidebar:
             min_value=1.0, max_value=20.0, value=7.0, step=0.5,
         )
         sound_enabled = st.toggle("🔊 Alert sound", value=True)
-        show_heatmap  = st.toggle("🌡️ Heatmap overlay", value=False)
+        show_heatmap  = st.toggle("🌡️ Heatmap overlay", value=True)
         show_zones    = st.toggle("⚠️ Danger zones overlay", value=True)
         speed_limit   = st.slider("🚗 Speed limit (km/h)", 10, 120, 30, 5)
         pixels_per_m  = st.slider("📏 Pixels per metre", 10, 100, 40, 5,
