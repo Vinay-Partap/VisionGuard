@@ -399,13 +399,22 @@ elif "Heatmap" in page:
     st.caption("Shows accumulated pedestrian & vehicle hotspots. Enable the overlay in Detection → sidebar toggle, then run detection. Heatmap builds up over frames.")
 
     heatmap_acc = st.session_state.heatmap_acc
-    stats = heatmap_acc.stats()
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🔥 Max Heat",    f"{stats['max_heat']:.3f}")
-    c2.metric("🌡️ Mean Heat",   f"{stats['mean_heat']:.5f}")
-    c3.metric("🎯 Hotspot %",   f"{stats['hotspot_pct']:.1f}%")
-    c4.metric("📍 Total Points", stats["total"])
+    # Use empty placeholders so metrics update in-place (no duplicate rows)
+    metric_row        = st.columns(4)
+    m_max   = metric_row[0].empty()
+    m_mean  = metric_row[1].empty()
+    m_hot   = metric_row[2].empty()
+    m_total = metric_row[3].empty()
+
+    def _render_stats():
+        s = heatmap_acc.stats()
+        m_max.metric("🔥 Max Heat",     f"{s['max_heat']:.3f}")
+        m_mean.metric("🌡️ Mean Heat",  f"{s['mean_heat']:.5f}")
+        m_hot.metric("🎯 Hotspot %",    f"{s['hotspot_pct']:.1f}%")
+        m_total.metric("📍 Total Points", s["total"])
+
+    _render_stats()   # initial render (zeros if nothing uploaded yet)
 
     st.divider()
     st.info("Run Detection with the **🌡️ Heatmap overlay** toggle enabled in the sidebar — the heatmap accumulates across every frame you process.")
@@ -418,7 +427,7 @@ elif "Heatmap" in page:
             frame = cv2.imdecode(img, cv2.IMREAD_COLOR)
             h_f, w_f = frame.shape[:2]
 
-            # FIX: always initialise grid before running detection
+            # Always initialise grid before running detection
             heatmap_acc.ensure_size(h_f, w_f)
 
             from utils.summary import init_summary as _is
@@ -450,12 +459,8 @@ elif "Heatmap" in page:
             with heat_col:
                 st.image(heat_frame, channels="BGR", caption="Heatmap overlay", use_container_width=True)
 
-            # Refresh stats after accumulation
-            stats = heatmap_acc.stats()
-            c1.metric("🔥 Max Heat",     f"{stats['max_heat']:.3f}")
-            c2.metric("🌡️ Mean Heat",   f"{stats['mean_heat']:.5f}")
-            c3.metric("🎯 Hotspot %",    f"{stats['hotspot_pct']:.1f}%")
-            c4.metric("📍 Total Points", stats["total"])
+            # Update metrics in-place (overwrites the initial render above)
+            _render_stats()
 
     with col2:
         st.markdown("""
