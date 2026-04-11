@@ -125,7 +125,7 @@ with st.sidebar:
 if "summary"         not in st.session_state: st.session_state.summary         = init_summary()
 if "fps_list"        not in st.session_state: st.session_state.fps_list        = []
 if "last_frame_time" not in st.session_state: st.session_state.last_frame_time = time.time()
-if "heatmap_acc"     not in st.session_state: st.session_state.heatmap_acc     = HeatmapAccumulator()
+if "heatmap_acc"     not in st.session_state: st.session_state.heatmap_acc     = HeatmapAccumulator(decay=0.97, radius=50)
 if "zone_mgr"        not in st.session_state: st.session_state.zone_mgr        = DangerZoneManager()
 if "active_session"  not in st.session_state: st.session_state.active_session  = None
 
@@ -419,61 +419,78 @@ elif "Heatmap" in page:
     st.divider()
     st.info("Run Detection with the **🌡️ Heatmap overlay** toggle enabled in the sidebar — the heatmap accumulates across every frame you process.")
 
-    col1, col2 = st.columns(2)
-    with col1:
+    # ── Hotspot box controls (col2) ──────────────────────────────────────────
+    ctrl_col1, ctrl_col2 = st.columns([3, 2])
+
+    with ctrl_col1:
         upload = st.file_uploader("Quick preview — upload an image", type=["jpg", "png", "jpeg"])
-        if upload:
-            img   = np.frombuffer(upload.read(), np.uint8)
-            frame = cv2.imdecode(img, cv2.IMREAD_COLOR)
-            h_f, w_f = frame.shape[:2]
 
-            # Always initialise grid before running detection
-            heatmap_acc.ensure_size(h_f, w_f)
-
-            from utils.summary import init_summary as _is
-            tmp_sm = _is()
-            from detector.yolo_detector import detect_objects as _do
-
-            # Run 5 times so heat accumulates even on sparse frames
-            for _ in range(5):
-                annotated, _ = _do(frame.copy(), tmp_sm, 0.4, 7.0,
-                                   heatmap_acc=heatmap_acc, show_heatmap=False)
-
-            # Fallback: seed heat manually if YOLO found nothing
-            if heatmap_acc.grid is not None and heatmap_acc.grid.max() < 0.01:
-                seed_pts = [
-                    (int(w_f * 0.25), int(h_f * 0.6)),
-                    (int(w_f * 0.5),  int(h_f * 0.55)),
-                    (int(w_f * 0.75), int(h_f * 0.65)),
-                    (int(w_f * 0.4),  int(h_f * 0.75)),
-                ]
-                for _ in range(8):
-                    heatmap_acc.update(seed_pts, heat_val=1.5)
-
-            heat_frame = heatmap_acc.composite_on(frame.copy())
-
-            # Show original and heatmap side by side
-            img_col, heat_col = st.columns(2)
-            with img_col:
-                st.image(frame,      channels="BGR", caption="Original image",  use_container_width=True)
-            with heat_col:
-                st.image(heat_frame, channels="BGR", caption="Heatmap overlay", use_container_width=True)
-
-            # Update metrics in-place (overwrites the initial render above)
-            _render_stats()
-
-    with col2:
-        st.markdown("""
-        **Colour scale**
-        - 🔵 **Blue** — Cool / low activity
-        - 🟡 **Yellow** — High activity
-        - 🔴 **Red** — Very high / danger hotspot
-        """)
-        st.info("Upload an image on the left. For best results use an image with people and vehicles visible.")
+    with ctrl_col2:
+        st.markdown("**Colour scale**")
+        st.markdown("- 🔵 **Blue** — Cool / low activity")
+        st.markdown("- 🟡 **Yellow** — High activity")
+        st.markdown("- 🔴 **Red** — Very high / danger hotspot")
+        st.divider()
+        st.markdown("**Hotspot Box Settings**")
+        show_boxes  = st.toggle("⬜ Draw hotspot boxes", value=True,
+                                help="Draws cyan bounding boxes around high-heat regions")
+        box_thresh  = st.slider("Box threshold", 0.3, 0.9, 0.6, 0.05,
+                                help="Heat level above which a region is boxed")
+        box_min_area= st.slider("Min box area (px²)", 50, 1000, 200, 50,
+                                help="Ignore tiny hotspot regions smaller than this")
         if st.button("🔄 Reset Heatmap"):
             st.session_state.heatmap_acc.reset()
             st.success("Heatmap cleared.")
             st.rerun()
+
+    if upload:
+        img   = np.frombuffer(upload.read(), np.uint8)
+        frame = cv2.imdecode(img, cv2.IMREAD_COLOR)
+        h_f, w_f = frame.shape[:2]
+
+        # Always initialise grid before running detection
+        heatmap_acc.ensure_size(h_f, w_f)
+
+        from utils.summary import init_summary as _is
+        tmp_sm = _is()
+        from detector.yolo_detector import detect_objects as _do
+
+        # Run 5 times so heat accumulates even on sparse frames
+        for _ in range(5):
+            annotated, _ = _do(frame.copy(), tmp_sm, 0.4, 7.0,
+                               heatmap_acc=heatmap_acc, show_heatmap=False)
+
+        # Fallback: seed heat manually if YOLO found nothing
+        if heatmap_acc.grid is not None and heatmap_acc.grid.max() < 0.01:
+            seed_pts = [
+                (int(w_f * 0.25), int(h_f * 0.6)),
+                (int(w_f * 0.5),  int(h_f * 0.55)),
+                (int(w_f * 0.75), int(h_f * 0.65)),
+                (int(w_f * 0.4),  int(h_f * 0.75)),
+            ]
+            for _ in range(8):
+                heatmap_acc.update(seed_pts, heat_val=1.5)
+
+        # Pass box settings from UI controls to composite_on
+        heat_frame = heatmap_acc.composite_on(
+            frame.copy(),
+            alpha=0.55,
+            show_boxes=show_boxes,
+            box_thresh=box_thresh,
+            box_min_area=box_min_area,
+            box_color=(0, 255, 255),   # cyan boxes
+            box_thickness=2,
+        )
+
+        # Show original and heatmap side by side
+        img_col, heat_col = st.columns(2)
+        with img_col:
+            st.image(frame,      channels="BGR", caption="Original image",  use_container_width=True)
+        with heat_col:
+            st.image(heat_frame, channels="BGR", caption="Heatmap + hotspot boxes", use_container_width=True)
+
+        # Update metrics in-place
+        _render_stats()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
