@@ -1,23 +1,34 @@
 # utils/heatmap.py  (main branch — cv2/numpy, no PIL)
+# FIXES APPLIED:
+#   1. update() auto-inits grid if None instead of silently returning
+#   2. composite_on() checks grid is None before .max()
+#   3. ensure_size() is safe to call multiple times
 import numpy as np
 import cv2
 
 
 class HeatmapAccumulator:
+    """
+    Accumulates detection centroids and renders a colour heatmap overlay
+    directly on a cv2 BGR frame.
+    """
     def __init__(self, decay=0.97):
         self.decay        = decay
-        self.grid         = None
+        self.grid         = None   # float32 (H, W), initialised on first frame
         self.height       = 0
         self.width        = 0
         self.total_points = 0
 
     def ensure_size(self, h, w):
+        """Initialise or resize the accumulation grid."""
         if self.grid is None or self.height != h or self.width != w:
             self.grid   = np.zeros((h, w), dtype=np.float32)
             self.height = h
             self.width  = w
 
     def update(self, centroids, heat_val=1.0):
+        """centroids: list of (cx, cy) pixel coords."""
+        # FIX 1: auto-init grid if not yet sized instead of silently returning
         if self.grid is None:
             if centroids:
                 max_cx = max(c[0] for c in centroids)
@@ -27,48 +38,51 @@ class HeatmapAccumulator:
                 return
 
         self.grid *= self.decay
-        radius = 50
+        radius = 40
 
         for cx, cy in centroids:
             cx, cy = int(cx), int(cy)
             x0 = max(cx - radius, 0);  x1 = min(cx + radius, self.width)
             y0 = max(cy - radius, 0);  y1 = min(cy + radius, self.height)
+
             xs = np.arange(x0, x1)
             ys = np.arange(y0, y1)
             xx, yy = np.meshgrid(xs, ys)
-            gauss = np.exp(-((xx - cx)**2 + (yy - cy)**2) / (2 * (radius / 2.5)**2))
+            gauss = np.exp(
+                -((xx - cx)**2 + (yy - cy)**2) / (2 * (radius / 3)**2)
+            )
             self.grid[y0:y1, x0:x1] += gauss * heat_val
             self.total_points += 1
 
         mx = self.grid.max()
         if mx > 0:
-            self.grid = self.grid / mx
+            self.grid /= max(mx, 5.0)
 
-    def composite_on(self, frame, alpha=0.55):
-        """Blend heatmap onto cv2 BGR frame."""
+    def composite_on(self, frame, alpha=0.5):
+        """
+        Blend heatmap onto a cv2 BGR frame and return result.
+        frame: numpy array (H, W, 3) BGR
+        """
         h, w = frame.shape[:2]
         self.ensure_size(h, w)
 
-        if self.grid is None or self.grid.max() < 0.001:
+        # FIX 2: guard against None grid and empty heatmap
+        if self.grid is None or self.grid.max() < 0.01:
             return frame
 
-        # Scale normalised grid to full 0-255 range
         heat_u8  = (self.grid * 255).clip(0, 255).astype(np.uint8)
         coloured = cv2.applyColorMap(heat_u8, cv2.COLORMAP_JET)
 
-        # Per-pixel alpha from heat intensity — no hard mask, smooth blend
-        # Pixels with zero heat get alpha=0 (fully transparent)
-        heat_alpha = (self.grid * alpha).clip(0, 1)[:, :, None]  # shape (H,W,1)
-
+        # Only blend where there is actual heat (mask out near-zero areas)
+        mask    = (heat_u8 > 5).astype(np.float32)[:, :, None]
         blended = (
-            coloured.astype(np.float32) * heat_alpha +
-            frame.astype(np.float32)   * (1.0 - heat_alpha)
-        ).clip(0, 255).astype(np.uint8)
+            coloured * mask * alpha + frame * (1 - mask * alpha)
+        ).astype(np.uint8)
 
         return blended
 
     def reset(self):
-        self.grid         = None
+        self.grid         = Nonegit
         self.total_points = 0
 
     def stats(self):
@@ -77,6 +91,6 @@ class HeatmapAccumulator:
         return {
             "max_heat":    round(float(self.grid.max()), 3),
             "mean_heat":   round(float(self.grid.mean()), 5),
-            "hotspot_pct": round(float((self.grid > 0.5).mean() * 100), 2),
+            "hotspot_pct": round(float((self.grid > 0.7).mean() * 100), 2),
             "total":       self.total_points,
         }
