@@ -8,5 +8,11 @@
     "password": "65375049b9e4d7cad6c9ba286fdeb9394b28135a3e84136404cfccfdcc438894",
     "role": "viewer",
     "display_name": "Viewer"
+  },
+  "teacher": {
+    "password": "cde383eee8ee7a4400adf7a15f716f179a2eb97646b37e089eb8d6d04e663416",
+    "role": "viewer",
+    "display_name": "Teacher View",
+    "created_at": "2026-04-11"
   }
 }
