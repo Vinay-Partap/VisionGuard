@@ -123,7 +123,7 @@ def detect_objects(frame, summary, confidence_threshold=0.4,
             centroids_this_frame.append((cx, cy))
             heatmap_acc.update([(cx, cy)], heat_val)
         if show_heatmap:
-            frame = heatmap_acc.composite_on(frame)
+            frame = heatmap_acc.composite_on(frame, alpha=0.55, show_boxes=True, box_thresh=0.6, box_min_area=200)
 
     # ── Second pass: draw boxes with IDs + speeds ─────────────────────────────
     for det in raw_detections:
